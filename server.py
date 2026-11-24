@@ -173,6 +173,94 @@ def school_profile():
     return profile or ("", "", "oceano", "raio")
 
 
+def totalpass_post(origin, path, payload, token=None):
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = Request(origin + path, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    with build_opener(NoRedirect()).open(req, timeout=8) as result:
+        return result.status, result.read(65536)
+
+
+def connect_totalpass(place_key, partner_key, origin, webhook):
+    status, body = totalpass_post(origin, "/partner/auth", {
+        "partner_api_key": partner_key, "place_api_key": place_key,
+    })
+    auth = json.loads(body)
+    token = auth.get("token") or auth.get("access_token") or (auth.get("data") or {}).get("token")
+    if status not in (200, 201) or not isinstance(token, str) or not token or not token.isascii() or any(c.isspace() for c in token):
+        raise ValueError("A autenticação não retornou um token reconhecido")
+    status, _ = totalpass_post(origin, "/partner/webhook/create", {
+        "webhook_type": "CHECKIN", "webhook_url": webhook,
+    }, token)
+    return status == 201
+
+
+def connection_config():
+    origin = os.environ.get("TOTALPASS_API_ORIGIN", "").rstrip("/")
+    public = os.environ.get("PRESIQ_PUBLIC_URL", "").rstrip("/")
+    partner_key = os.environ.get("TOTALPASS_PARTNER_API_KEY", "")
+    secret = os.environ.get("PRESIQ_WEBHOOK_SECRET", "")
+    urls = [urlsplit(origin), urlsplit(public)]
+    if any(u.scheme != "https" or not u.hostname or u.username or u.password or u.path or u.query or u.fragment for u in urls):
+        return None
+    if not urls[0].hostname.endswith(".totalpass.com") or not partner_key or len(secret) < 24:
+        return None
+    if not all(c.isascii() and (c.isalnum() or c in "_-") for c in secret):
+        return None
+    return origin, public, partner_key, secret
+
+
+@app.route("/conectar-totalpass", methods=["GET", "POST"])
+def totalpass_connection():
+    panel_auth()
+    csrf = hmac.new(os.environ["PRESIQ_PANEL_PASSWORD"].encode(), b"totalpass-connect", hashlib.sha256).hexdigest()
+    config = connection_config()
+    db = database()
+    message = ""
+    try:
+        db.execute("CREATE TABLE IF NOT EXISTS totalpass_connection (singleton INTEGER PRIMARY KEY)")
+        if request.method == "POST":
+            if not hmac.compare_digest(csrf, request.form.get("csrf", "")):
+                abort(403)
+            place_key = request.form.get("place_key", "").strip()
+            if not config or not place_key or len(place_key) > 250:
+                abort(400)
+            origin, public, partner_key, secret = config
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                if not db.execute("SELECT 1 FROM totalpass_connection").fetchone():
+                    try:
+                        if connect_totalpass(place_key, partner_key, origin, f"{public}/integracoes/totalpass/{secret}"):
+                            db.execute("INSERT INTO totalpass_connection VALUES (1)")
+                        else:
+                            message = "A TotalPass não confirmou o cadastro do recebimento."
+                    except HTTPError as error:
+                        message = f"A TotalPass recusou a solicitação (HTTP {error.code}). Confira a chave da unidade e o ambiente."
+                    except (OSError, ValueError, AttributeError):
+                        message = "Sem confirmação da TotalPass. Confira no portal se o recebimento foi cadastrado antes de tentar novamente."
+        connected = bool(db.execute("SELECT 1 FROM totalpass_connection").fetchone())
+    finally:
+        db.close()
+    if connected:
+        detail = "<p>Recebimento cadastrado. Faça um check-in de homologação para verificar a entrega e a validação no painel.</p>"
+    elif config:
+        detail = f"""<p>Use a chave da unidade do ambiente configurado pelo responsável técnico.</p>
+        <form method="post"><input type="hidden" name="csrf" value="{csrf}">
+        <label for="place_key">Chave da unidade</label>
+        <input id="place_key" name="place_key" type="password" autocomplete="off" maxlength="250" required>
+        <button>Conectar TotalPass</button></form>"""
+    else:
+        detail = "<p>Preparação pendente. O responsável técnico precisa configurar a credencial do integrador e o endereço HTTPS do PRESIQ.</p>"
+    return f"""<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Conectar TotalPass · PRESIQ</title>
+    <style>body{{background:#101a28;color:#f6f7fb;font:1rem system-ui;max-width:36rem;margin:auto;padding:1.25rem;line-height:1.6}}
+    a{{color:#9fdcff}}form{{display:grid;gap:.6rem}}input,button{{box-sizing:border-box;width:100%;min-height:44px;font:inherit;border-radius:.5rem;padding:.5rem}}
+    button{{background:#36b1e8;color:#101a28;border:0;font-weight:bold}}</style>
+    <main><a href="/configuracao">Voltar à configuração</a><h1>Conectar TotalPass</h1>
+    <p role="status">{escape(message)}</p>{detail}</main></html>""", 200, {"Cache-Control": "no-store"}
+
+
 @app.route("/configuracao", methods=["GET", "POST"])
 def setup():
     panel_auth()
@@ -232,7 +320,7 @@ def setup():
     <output id="preview" for="name unit color icon">{ICONS[icon]} {escape(name or "Sua escola")}</output>
     <button type="submit">Salvar escola</button></form></section>
     <section><h2>Conectar parceiros</h2><p>Use os portais oficiais com o responsável pela unidade.</p>
-    <h3>TotalPass</h3><ol>
+    <h3>TotalPass</h3><p><a href="/conectar-totalpass">Conectar TotalPass</a></p><ol>
     <li>Solicite acesso de integrador no <a href="https://developers.totalpass.com/">portal de desenvolvedores</a>.</li>
     <li>No Portal TotalPass da unidade, abra <strong>Integrações</strong> e gere a chave da unidade. Entregue a chave por um canal seguro ao responsável técnico.</li>
     <li>O técnico configura o recebimento dos check-ins e vincula os códigos dos alunos às reservas da turma piloto.</li>
@@ -292,5 +380,5 @@ def teacher():
 
 @app.errorhandler(401)
 def unauthorized(_error):
-    headers = {"WWW-Authenticate": 'Basic realm="PRESIQ"'} if request.path in ("/professor", "/configuracao") else {}
+    headers = {"WWW-Authenticate": 'Basic realm="PRESIQ"'} if request.path in ("/professor", "/configuracao", "/conectar-totalpass") else {}
     return "Acesso restrito", 401, headers

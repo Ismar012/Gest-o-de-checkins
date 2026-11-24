@@ -20,3 +20,10 @@ Abra `/configuracao` com as mesmas credenciais do painel. Preencha o nome da esc
 4. Faça um check-in com um aluno de teste e uma reserva válida. Valide que o painel ficou verde e que o mesmo evento consta no histórico oficial. Repita com aluno sem vínculo e check-in expirado, que devem ficar fora da lista de liberados.
 
 Somente a resposta HTTP 200 do parceiro libera a reserva. Uma resposta ambígua ou falha de rede vai para revisão. Se houver uma interrupção durante a confirmação, confira o histórico oficial antes de qualquer ação manual. Para produção, conecte o painel ao cadastro e à agenda persistentes da escola e implemente perfis por usuário.
+
+### Conectar pela tela do PRESIQ
+
+1. O responsável técnico configura no servidor `TOTALPASS_PARTNER_API_KEY` (credencial do integrador), `TOTALPASS_API_ORIGIN` (origem HTTPS da API de Check-in fornecida pela TotalPass para o ambiente), `PRESIQ_PUBLIC_URL` (origem pública HTTPS do PRESIQ), `PRESIQ_WEBHOOK_SECRET` e `PRESIQ_PANEL_PASSWORD`. O segredo do webhook deve ter pelo menos 24 caracteres, usando letras ASCII, números, hífen ou sublinhado.
+2. O responsável pela escola abre **Configurar escola → Conectar TotalPass**, informa a chave da unidade do mesmo ambiente e clica em **Conectar TotalPass**. O PRESIQ autentica e solicita o cadastro do endereço que recebe os check-ins. A chave da unidade e o token não são gravados pelo formulário. Se um webhook já tiver sido cadastrado manualmente, confira a configuração existente antes de usar este botão.
+3. A mensagem **Recebimento cadastrado** indica que o cadastro foi aceito. Faça um check-in de homologação e confira o resultado no painel e no histórico oficial. A implementação foi testada com respostas simuladas, incluindo o formato de token utilizado no teste. Falta verificar esse formato e o recebimento com credenciais de homologação reais.
+4. Este piloto comporta uma unidade por instalação. Para trocar de unidade, configure outra instalação e coordene com a TotalPass a alteração do webhook anterior, quando aplicável.

@@ -59,3 +59,27 @@ with TemporaryDirectory() as tmp, patch.dict(os.environ, {
     assert client.post("/configuracao", auth=auth, data={**form, "csrf": ""}).status_code == 403
     print("Cadastro da escola, proteção do formulário e identidade compartilhada verificados.")
     print("Webhook, autenticação, painel, expiração, divergência, aceite e duplicidade verificados.")
+
+with TemporaryDirectory() as tmp, patch.dict(os.environ, {
+    "PRESIQ_DB": str(Path(tmp) / "connection.sqlite3"),
+    "PRESIQ_WEBHOOK_SECRET": secret, "PRESIQ_PANEL_PASSWORD": secret,
+    "TOTALPASS_PARTNER_API_KEY": "integrador-ficticio",
+    "TOTALPASS_API_ORIGIN": "https://gym-service-api.totalpass.com",
+    "PRESIQ_PUBLIC_URL": "https://presiq.example",
+}), patch.object(server, "totalpass_post", side_effect=[
+    (201, b'{"token":"token-ficticio"}'), (201, b'{}'),
+]) as api:
+    client = server.app.test_client()
+    path = "/conectar-totalpass"
+    assert client.get(path).status_code == 401
+    form = client.get(path, auth=auth)
+    csrf = re.search(r'name="csrf" value="([a-f0-9]+)"', form.text)[1]
+    fields = {"csrf": csrf, "place_key": "unidade-ficticia"}
+    assert client.post(path, auth=auth, data={**fields, "csrf": ""}).status_code == 403
+    assert "Recebimento cadastrado" in client.post(path, auth=auth, data=fields).text
+    assert "Recebimento cadastrado" in client.post(path, auth=auth, data=fields).text
+    assert api.call_count == 2
+    assert api.call_args_list[0].args[1] == "/partner/auth"
+    assert api.call_args_list[1].args[1] == "/partner/webhook/create"
+    assert "unidade-ficticia" not in client.get(path, auth=auth).text
+    print("Conexão TotalPass verificada com API simulada: autenticação, registro e proteção contra repetição.")
