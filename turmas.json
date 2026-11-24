@@ -1,0 +1,14 @@
+{
+  "nome": "Elite Teams Imbuí · Cadastro demonstrativo",
+  "unidade": "unidade-ficticia",
+  "reservas": [
+    {
+      "id": "reserva-teste-1",
+      "aluno": "Aluno de teste",
+      "turma": "18h · Iniciante",
+      "totalpass": "ALUNO-FICTICIO",
+      "inicio_checkin": "2030-01-01T17:30:00-03:00",
+      "fim_checkin": "2030-01-01T18:15:00-03:00"
+    }
+  ]
+}
